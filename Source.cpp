@@ -30,6 +30,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	static ID2D1SolidColorBrush* m_pNormalBrush;
 	static ID2D1DeviceContext* m_pDeviceContext;
 	static double zoom = 1.0;
+	static double x = 100.0; // 中心点
+	static double y = 100.0; // 中心点
 
 	switch (msg)
 	{
@@ -49,11 +51,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			if (FAILED(hr)) {
 				MessageBox(hWnd, L"Direct2D の初期化に失敗しました。", 0, 0);
 			}
+
+			RECT rect;
+			GetClientRect(hWnd, &rect);
+
+			x = rect.right / 2.0;
+			y = rect.bottom / 2.0;
+
 		}
 		break;
 	case WM_MOUSEWHEEL:
 		{
 			zoom += GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
+
+
+			POINT p = { 0 };
+			GetCursorPos(&p);
+			ScreenToClient(hWnd, &p);
+			x = p.x;
+			y = p.y;
+
 			InvalidateRect(hWnd, 0, 0);
 		}
 		break;
@@ -76,22 +93,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			{
 				m_pRenderTarget->BeginDraw();
 			}
+
 			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+			//m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Translation(x, y));
+
 			m_pRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
 
-			POINT p = { 0 };
-			GetCursorPos(&p);
-			ScreenToClient(hWnd, &p);
-			m_pRenderTarget->SetTransform(
-				D2D1::Matrix3x2F::Scale(
-					D2D1::SizeF(
-						1.0f + 0.1f * zoom,    // /120.0f to normalize and 0.1 the scale factor
-						1.0f + 0.1f * zoom),
-					D2D1::Point2F(p.x, p.y)
-				)
-			);
+			D2D1_POINT_2F p1;
+			p1.x = -x;
+			p1.y = -y;
+			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Scale(zoom,zoom,p1));
 
-			D2D1_POINT_2F s = { (float)10.0f, (float)10.0f };
+			D2D1_POINT_2F s = { (float)0.0f, (float)0.0f };
 			D2D1_POINT_2F e = { (float)100.0f, (float)100.0f };
 			m_pRenderTarget->DrawLine(s, e, m_pNormalBrush, 10.0f);
 			hr = m_pRenderTarget->EndDraw();
