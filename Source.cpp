@@ -86,8 +86,8 @@ void OnZoom(HWND hWnd, int x, int y, CTrans& trans)
 
 	CPoint p3;
 
-	p3.x = trans.l.x + (p1.x - trans.l.x) * trans.z;
-	p3.y = trans.l.y + (p1.y - trans.l.y) * trans.z;
+	p3.x = trans.l.x - p2.x * (oldz / trans.z - 1);
+	p3.y = trans.l.y - p2.y * (oldz / trans.z  - 1);
 
 	trans.settransfrompoint(&p3);
 
@@ -126,11 +126,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	static IDWriteTextFormat* m_pTextFormat;
 	static ID2D1SolidColorBrush* m_pNormalBrush;
 	static ID2D1DeviceContext* m_pDeviceContext;
+	static D2D1::Matrix3x2F matrix;
 	static CTrans trans;
 	switch (msg)
 	{
 	case WM_CREATE:
 		{
+			matrix = D2D1::Matrix3x2F::Identity();
 			static const FLOAT msc_fontSize = 25;
 
 			HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
@@ -158,15 +160,41 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_MOUSEWHEEL:
 		{
-			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			int x = GET_X_LPARAM(lParam);
 			int y = GET_Y_LPARAM(lParam);
+			CPoint p1;
+			p1.x = x;
+			p1.y = y;
+			CPoint p2;
+			trans.d2l(&p1, &p2);
+		
+			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			if (delta < 0) {
-				OnShrink(hWnd, x, y, trans);
+				trans.z *= 1.0 / ZOOM_STEP;
+				if (trans.z < ZOOM_MIN) {
+					trans.z = ZOOM_MIN;
+				}
 			}
 			else {
-				OnZoom(hWnd, x, y, trans);
+				double oldz = trans.z;
+				trans.z *= ZOOM_STEP;
+				if (trans.z > ZOOM_MAX) {
+					trans.z = ZOOM_MAX;
+				}
 			}
+
+
+			matrix = D2D1::Matrix3x2F::Translation((FLOAT)(p2.x), (FLOAT)(p2.y)) *
+				D2D1::Matrix3x2F::Scale((FLOAT)trans.z, (FLOAT)trans.z) *
+				D2D1::Matrix3x2F::Translation((FLOAT)(-p2.x), (FLOAT)(-p2.y));
+			InvalidateRect(hWnd, 0, 0);
+
+			//if (delta < 0) {
+			//	OnShrink(hWnd, x, y, trans);
+			//}
+			//else {
+			//	OnZoom(hWnd, x, y, trans);
+			//}
 		
 		//double oldzoom = zoom;
 
@@ -257,12 +285,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				m_pRenderTarget->BeginDraw();
 			}
 
-			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-
-			m_pRenderTarget->SetTransform(
-				D2D1::Matrix3x2F::Translation((FLOAT)(trans.c.w / 2 + trans.p.x - trans.l.x), (FLOAT)(trans.c.h / 2 + trans.p.y - trans.l.y))*
-				D2D1::Matrix3x2F::Scale((FLOAT)trans.z, (FLOAT)trans.z, D2D1::Point2F((FLOAT)(trans.c.w / 2 + trans.p.x), (FLOAT)(trans.c.h / 2 + trans.p.y)))
-			);
+			m_pRenderTarget->SetTransform(matrix);
 
 			m_pRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
 
