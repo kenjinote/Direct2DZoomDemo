@@ -9,6 +9,9 @@
 #include <dwrite.h>
 
 #define DEFAULT_DPI 96
+#define ZOOM_MAX 100.0
+#define ZOOM_MIN 0.1
+#define ZOOM_STEP 1.20
 
 TCHAR szClassName[] = TEXT("Window");
 
@@ -21,14 +24,97 @@ template<class Interface> inline void SafeRelease(Interface** ppInterfaceToRelea
 	}
 }
 
-D2D1_POINT_2F LookAtPoint;
-double zoom = 1.0;
-double w = 0.0;
-double h = 0.0;
-void DisplayPoint2LogicPoint(const D2D1_POINT_2F* p1, D2D1_POINT_2F* p2)
+struct CPoint {
+	double x;
+	double y;
+};
+
+struct CSize {
+	double w;
+	double h;
+};
+
+class CTrans {
+public:
+	CTrans() : c{ 0,0 }, z(1), l{ 0,0 }, p{ 0.0, 0.0 } {}
+
+	CPoint p; // クライアント左上座標
+	CSize c; // クライアントのサイズ
+	// ズーム
+	double z;
+	//　論理座標の注視点。これが画面上の中央に表示
+	CPoint l;
+	void CTrans::l2d(const CPoint* p1, CPoint* p2) const
+	{
+		p2->x = p.x + c.w / 2 + (p1->x - l.x) * z;
+		p2->y = p.y + c.h / 2 + (p1->y - l.y) * z;
+	}
+	void CTrans::d2l(const CPoint* p1, CPoint* p2) const
+	{
+		p2->x = l.x + (p1->x - p.x - c.w / 2) / z;
+		p2->y = l.y + (p1->y - p.y - c.h / 2) / z;
+	}
+	void CTrans::settransfromrect(const CPoint* p1, const CPoint* p2, const int margin)
+	{
+		l.x = p1->x + (p2->x - p1->x) / 2;
+		l.y = p1->y + (p2->y - p1->y) / 2;
+		if (p2->x - p1->x == 0.0 || p2->y - p1->y == 0.0)
+			z = 1.0;
+		else
+			z = min((c.w - margin * 2) / (p2->x - p1->x), (c.h - margin * 2) / (p2->y - p1->y));
+	}
+	void CTrans::settransfrompoint(const CPoint* p)
+	{
+		l.x = p->x;
+		l.y = p->y;
+	};
+};
+
+void OnZoom(HWND hWnd, int x, int y, CTrans& trans)
 {
-	p2->x = LookAtPoint.x + (p1->x - w / 2) / zoom;
-	p2->y = LookAtPoint.y + (p1->y - h / 2) / zoom;
+	// ここバグっている
+	CPoint p1{ (double)x, (double)y };
+	CPoint p2;
+	trans.d2l(&p1, &p2);
+
+
+	double oldz = trans.z;
+	trans.z *= ZOOM_STEP;
+	if (trans.z > ZOOM_MAX) {
+		trans.z = ZOOM_MAX;
+	}
+
+	CPoint p3;
+
+	p3.x = trans.l.x + (p1.x - trans.l.x) * trans.z;
+	p3.y = trans.l.y + (p1.y - trans.l.y) * trans.z;
+
+	trans.settransfrompoint(&p3);
+
+	if (oldz != trans.z) {
+		InvalidateRect(hWnd, NULL, FALSE);
+	}
+	InvalidateRect(hWnd, 0, 0);
+}
+
+void OnShrink(HWND hWnd, int x, int y, CTrans &trans)
+{
+	double oldz = trans.z;
+	trans.z *= 1.0 / ZOOM_STEP;
+	if (trans.z < ZOOM_MIN) {
+		trans.z = ZOOM_MIN;
+	}
+
+	// ここバグっている
+	CPoint p1{ (double)x, (double)y };
+	CPoint p2;
+	trans.d2l(&p1, &p2);
+	trans.settransfrompoint(&p2);
+
+	if (oldz != trans.z) {
+		InvalidateRect(hWnd, NULL, FALSE);
+	}
+	InvalidateRect(hWnd, 0, 0);
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -40,6 +126,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	static IDWriteTextFormat* m_pTextFormat;
 	static ID2D1SolidColorBrush* m_pNormalBrush;
 	static ID2D1DeviceContext* m_pDeviceContext;
+	static CTrans trans;
 	switch (msg)
 	{
 	case WM_CREATE:
@@ -62,36 +149,45 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			RECT rect;
 			GetClientRect(hWnd, &rect);
 
-			LookAtPoint.x = rect.right / 2.0;
-			LookAtPoint.y = rect.bottom / 2.0;
-			w = rect.right;
-			h = rect.bottom;
-
-			zoom = 1.0;
+			trans.c.w = rect.right;
+			trans.c.h = rect.bottom;
+			trans.p.x = 0;
+			trans.p.y = 0;
+			trans.z = 1.0;
 		}
 		break;
 	case WM_MOUSEWHEEL:
 		{
-			double oldzoom = zoom;
+			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+			int x = GET_X_LPARAM(lParam);
+			int y = GET_Y_LPARAM(lParam);
+			if (delta < 0) {
+				OnShrink(hWnd, x, y, trans);
+			}
+			else {
+				OnZoom(hWnd, x, y, trans);
+			}
+		
+		//double oldzoom = zoom;
 
-			POINT p = { 0 };
-			GetCursorPos(&p);
-			ScreenToClient(hWnd, &p);
+			//POINT p = { 0 };
+			//GetCursorPos(&p);
+			//ScreenToClient(hWnd, &p);
 
-			D2D1_POINT_2F p1;
-			p1.x = (float)p.x;
-			p1.y = (float)p.y;
+			//D2D1_POINT_2F p1;
+			//p1.x = (float)p.x;
+			//p1.y = (float)p.y;
 
-			D2D1_POINT_2F p2;
+			//D2D1_POINT_2F p2;
 
-			DisplayPoint2LogicPoint(&p1, &p2);
+			//DisplayPoint2LogicPoint(&p1, &p2);
 
-			zoom += GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
+			//zoom += GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
 
-			LookAtPoint.x = LookAtPoint.x - zoom * p2.x + p2.x;
-			LookAtPoint.y = LookAtPoint.y - zoom * p2.y + p2.y;
+			//LookAtPoint.x = LookAtPoint.x - zoom * p2.x + p2.x;
+			//LookAtPoint.y = LookAtPoint.y - zoom * p2.y + p2.y;
 
-			InvalidateRect(hWnd, 0, 0);
+			//InvalidateRect(hWnd, 0, 0);
 		}
 		break;
 	case WM_LBUTTONDOWN:
@@ -99,31 +195,46 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			D2D1_POINT_2F p1;
 			p1.x = (float)GET_X_LPARAM(lParam);
 			p1.y = (float)GET_Y_LPARAM(lParam);
-			LookAtPoint.x = p1.x;
-			LookAtPoint.y = p1.y;
+			//LookAtPoint.x = p1.x;
+			//LookAtPoint.y = p1.y;
+			trans.l.x = p1.x;
+			trans.l.y = p1.y;
 			InvalidateRect(hWnd, 0, 0);
 		}
 		break;
 	case WM_RBUTTONDOWN:
 		{
-			D2D1_POINT_2F p1;
+			CPoint p1;
 			p1.x = (float)GET_X_LPARAM(lParam);
 			p1.y = (float)GET_Y_LPARAM(lParam);
-			D2D1_POINT_2F p2;
-			DisplayPoint2LogicPoint(&p1, &p2);
-			LookAtPoint.x = p2.x;
-			LookAtPoint.y = p2.y;
+			CPoint p2;
+			trans.d2l(&p1, &p2);
+			trans.l.x = p2.x;
+			trans.l.y = p2.y;
 			InvalidateRect(hWnd, 0, 0);
 		}
 		break;
 	case WM_KEYDOWN:
 		{
-			RECT rect;
-			GetClientRect(hWnd, &rect);
-			LookAtPoint.x = rect.right / 2;
-			LookAtPoint.y = rect.bottom / 2;
-			zoom = 1.0;
-			InvalidateRect(hWnd, 0, 0);
+			if (wParam == VK_SPACE)
+			{
+				RECT rect;
+				GetClientRect(hWnd, &rect);
+				trans.l.x = 0;
+				trans.l.y = 0;
+				trans.c.w = rect.right;
+				trans.c.h = rect.bottom;
+				trans.z = 1.0;
+				InvalidateRect(hWnd, 0, 0);
+			}
+			else if (wParam == VK_UP) {
+				trans.z += 1.0;
+				InvalidateRect(hWnd, 0, 0);
+			}
+			else if (wParam == VK_DOWN) {
+				trans.z -= 1.0;
+				InvalidateRect(hWnd, 0, 0);
+			}
 		}
 		break;
 	case WM_PAINT:
@@ -149,17 +260,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
 
 			m_pRenderTarget->SetTransform(
-				D2D1::Matrix3x2F::Translation(LookAtPoint.x, LookAtPoint.y) *
-				D2D1::Matrix3x2F::Scale((FLOAT)zoom, (FLOAT)zoom /*D2D1::Point2F((FLOAT)(trans.c.w / 2 + trans.p.x), (FLOAT)(trans.c.h / 2 + trans.p.y))*/)
+				D2D1::Matrix3x2F::Translation((FLOAT)(trans.c.w / 2 + trans.p.x - trans.l.x), (FLOAT)(trans.c.h / 2 + trans.p.y - trans.l.y))*
+				D2D1::Matrix3x2F::Scale((FLOAT)trans.z, (FLOAT)trans.z, D2D1::Point2F((FLOAT)(trans.c.w / 2 + trans.p.x), (FLOAT)(trans.c.h / 2 + trans.p.y)))
 			);
-//			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Translation(LookAtPoint.x, LookAtPoint.y));
-			//m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Scale(zoom, zoom, LookAtPoint));
 
 			m_pRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
-
-			//D2D1_POINT_2F p1;
-			//p1.x = -x;
-			//p1.y = -y;
 
 			D2D1_POINT_2F s = { (float)0.0f, (float)0.0f };
 			D2D1_POINT_2F e = { (float)100.0f, (float)100.0f };
