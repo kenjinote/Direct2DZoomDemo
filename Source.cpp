@@ -4,6 +4,7 @@
 #pragma comment(lib, "dwrite")
 
 #include <windows.h>
+#include <windowsx.h>
 #include <d2d1_3.h>
 #include <dwrite.h>
 
@@ -20,6 +21,16 @@ template<class Interface> inline void SafeRelease(Interface** ppInterfaceToRelea
 	}
 }
 
+D2D1_POINT_2F LookAtPoint;
+double zoom = 1.0;
+double w = 0.0;
+double h = 0.0;
+void DisplayPoint2LogicPoint(const D2D1_POINT_2F* p1, D2D1_POINT_2F* p2)
+{
+	p2->x = LookAtPoint.x + (p1->x - w / 2) / zoom;
+	p2->y = LookAtPoint.y + (p1->y - h / 2) / zoom;
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	static ID2D1Factory* m_pD2DFactory;
@@ -29,10 +40,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	static IDWriteTextFormat* m_pTextFormat;
 	static ID2D1SolidColorBrush* m_pNormalBrush;
 	static ID2D1DeviceContext* m_pDeviceContext;
-	static double zoom = 1.0;
-	static double x = 100.0; // 中心点
-	static double y = 100.0; // 中心点
-
 	switch (msg)
 	{
 	case WM_CREATE:
@@ -55,22 +62,67 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			RECT rect;
 			GetClientRect(hWnd, &rect);
 
-			x = rect.right / 2.0;
-			y = rect.bottom / 2.0;
+			LookAtPoint.x = rect.right / 2.0;
+			LookAtPoint.y = rect.bottom / 2.0;
+			w = rect.right;
+			h = rect.bottom;
 
+			zoom = 1.0;
 		}
 		break;
 	case WM_MOUSEWHEEL:
 		{
-			zoom += GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
-
+			double oldzoom = zoom;
 
 			POINT p = { 0 };
 			GetCursorPos(&p);
 			ScreenToClient(hWnd, &p);
-			x = p.x;
-			y = p.y;
 
+			D2D1_POINT_2F p1;
+			p1.x = (float)p.x;
+			p1.y = (float)p.y;
+
+			D2D1_POINT_2F p2;
+
+			DisplayPoint2LogicPoint(&p1, &p2);
+
+			zoom += GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
+
+			LookAtPoint.x = LookAtPoint.x - zoom * p2.x + p2.x;
+			LookAtPoint.y = LookAtPoint.y - zoom * p2.y + p2.y;
+
+			InvalidateRect(hWnd, 0, 0);
+		}
+		break;
+	case WM_LBUTTONDOWN:
+		{
+			D2D1_POINT_2F p1;
+			p1.x = (float)GET_X_LPARAM(lParam);
+			p1.y = (float)GET_Y_LPARAM(lParam);
+			LookAtPoint.x = p1.x;
+			LookAtPoint.y = p1.y;
+			InvalidateRect(hWnd, 0, 0);
+		}
+		break;
+	case WM_RBUTTONDOWN:
+		{
+			D2D1_POINT_2F p1;
+			p1.x = (float)GET_X_LPARAM(lParam);
+			p1.y = (float)GET_Y_LPARAM(lParam);
+			D2D1_POINT_2F p2;
+			DisplayPoint2LogicPoint(&p1, &p2);
+			LookAtPoint.x = p2.x;
+			LookAtPoint.y = p2.y;
+			InvalidateRect(hWnd, 0, 0);
+		}
+		break;
+	case WM_KEYDOWN:
+		{
+			RECT rect;
+			GetClientRect(hWnd, &rect);
+			LookAtPoint.x = rect.right / 2;
+			LookAtPoint.y = rect.bottom / 2;
+			zoom = 1.0;
 			InvalidateRect(hWnd, 0, 0);
 		}
 		break;
@@ -95,14 +147,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			}
 
 			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-			//m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Translation(x, y));
+
+			m_pRenderTarget->SetTransform(
+				D2D1::Matrix3x2F::Translation(LookAtPoint.x, LookAtPoint.y) *
+				D2D1::Matrix3x2F::Scale((FLOAT)zoom, (FLOAT)zoom /*D2D1::Point2F((FLOAT)(trans.c.w / 2 + trans.p.x), (FLOAT)(trans.c.h / 2 + trans.p.y))*/)
+			);
+//			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Translation(LookAtPoint.x, LookAtPoint.y));
+			//m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Scale(zoom, zoom, LookAtPoint));
 
 			m_pRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
 
-			D2D1_POINT_2F p1;
-			p1.x = -x;
-			p1.y = -y;
-			m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Scale(zoom,zoom,p1));
+			//D2D1_POINT_2F p1;
+			//p1.x = -x;
+			//p1.y = -y;
 
 			D2D1_POINT_2F s = { (float)0.0f, (float)0.0f };
 			D2D1_POINT_2F e = { (float)100.0f, (float)100.0f };
