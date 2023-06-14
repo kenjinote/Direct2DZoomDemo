@@ -24,99 +24,6 @@ template<class Interface> inline void SafeRelease(Interface** ppInterfaceToRelea
 	}
 }
 
-struct CPoint {
-	double x;
-	double y;
-};
-
-struct CSize {
-	double w;
-	double h;
-};
-
-class CTrans {
-public:
-	CTrans() : c{ 0,0 }, z(1), l{ 0,0 }, p{ 0.0, 0.0 } {}
-
-	CPoint p; // クライアント左上座標
-	CSize c; // クライアントのサイズ
-	// ズーム
-	double z;
-	//　論理座標の注視点。これが画面上の中央に表示
-	CPoint l;
-	void CTrans::l2d(const CPoint* p1, CPoint* p2) const
-	{
-		p2->x = p.x + c.w / 2 + (p1->x - l.x) * z;
-		p2->y = p.y + c.h / 2 + (p1->y - l.y) * z;
-	}
-	void CTrans::d2l(const CPoint* p1, CPoint* p2) const
-	{
-		p2->x = l.x + (p1->x - p.x - c.w / 2) / z;
-		p2->y = l.y + (p1->y - p.y - c.h / 2) / z;
-	}
-	void CTrans::settransfromrect(const CPoint* p1, const CPoint* p2, const int margin)
-	{
-		l.x = p1->x + (p2->x - p1->x) / 2;
-		l.y = p1->y + (p2->y - p1->y) / 2;
-		if (p2->x - p1->x == 0.0 || p2->y - p1->y == 0.0)
-			z = 1.0;
-		else
-			z = min((c.w - margin * 2) / (p2->x - p1->x), (c.h - margin * 2) / (p2->y - p1->y));
-	}
-	void CTrans::settransfrompoint(const CPoint* p)
-	{
-		l.x = p->x;
-		l.y = p->y;
-	};
-};
-
-void OnZoom(HWND hWnd, int x, int y, CTrans& trans)
-{
-	// ここバグっている
-	CPoint p1{ (double)x, (double)y };
-	CPoint p2;
-	trans.d2l(&p1, &p2);
-
-
-	double oldz = trans.z;
-	trans.z *= ZOOM_STEP;
-	if (trans.z > ZOOM_MAX) {
-		trans.z = ZOOM_MAX;
-	}
-
-	CPoint p3;
-
-	p3.x = trans.l.x - p2.x * (oldz / trans.z - 1);
-	p3.y = trans.l.y - p2.y * (oldz / trans.z  - 1);
-
-	trans.settransfrompoint(&p3);
-
-	if (oldz != trans.z) {
-		InvalidateRect(hWnd, NULL, FALSE);
-	}
-	InvalidateRect(hWnd, 0, 0);
-}
-
-void OnShrink(HWND hWnd, int x, int y, CTrans &trans)
-{
-	double oldz = trans.z;
-	trans.z *= 1.0 / ZOOM_STEP;
-	if (trans.z < ZOOM_MIN) {
-		trans.z = ZOOM_MIN;
-	}
-
-	// ここバグっている
-	CPoint p1{ (double)x, (double)y };
-	CPoint p2;
-	trans.d2l(&p1, &p2);
-	trans.settransfrompoint(&p2);
-
-	if (oldz != trans.z) {
-		InvalidateRect(hWnd, NULL, FALSE);
-	}
-	InvalidateRect(hWnd, 0, 0);
-}
-
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	static ID2D1Factory* m_pD2DFactory;
@@ -127,12 +34,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	static ID2D1SolidColorBrush* m_pNormalBrush;
 	static ID2D1DeviceContext* m_pDeviceContext;
 	static D2D1::Matrix3x2F matrix;
-	static CTrans trans;
 	switch (msg)
 	{
 	case WM_CREATE:
 		{
-			matrix = D2D1::Matrix3x2F::Identity();
 			static const FLOAT msc_fontSize = 25;
 
 			HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
@@ -147,122 +52,44 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			if (FAILED(hr)) {
 				MessageBox(hWnd, L"Direct2D の初期化に失敗しました。", 0, 0);
 			}
-
 			RECT rect;
 			GetClientRect(hWnd, &rect);
 
-			trans.c.w = rect.right;
-			trans.c.h = rect.bottom;
-			trans.p.x = 0;
-			trans.p.y = 0;
-			trans.z = 1.0;
+			matrix = D2D1::Matrix3x2F::Identity();
 		}
 		break;
 	case WM_MOUSEWHEEL:
 		{
-			int x = GET_X_LPARAM(lParam);
-			int y = GET_Y_LPARAM(lParam);
-			CPoint p1;
-			p1.x = x;
-			p1.y = y;
-			CPoint p2;
-			trans.d2l(&p1, &p2);
-		
+			POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			ScreenToClient(hWnd, &point);
+			float zoom = 1.0f;
 			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			if (delta < 0) {
-				trans.z *= 1.0 / ZOOM_STEP;
-				if (trans.z < ZOOM_MIN) {
-					trans.z = ZOOM_MIN;
+				zoom = 0.9f;
+				if (matrix.m11 < ZOOM_MIN) {
+					zoom = 1.0f;
 				}
 			}
 			else {
-				double oldz = trans.z;
-				trans.z *= ZOOM_STEP;
-				if (trans.z > ZOOM_MAX) {
-					trans.z = ZOOM_MAX;
+				zoom = 1.1f;
+				if (matrix.m11 > ZOOM_MAX) {
+					zoom = 1.0f;
 				}
 			}
-
-
-			matrix = D2D1::Matrix3x2F::Translation((FLOAT)(p2.x), (FLOAT)(p2.y)) *
-				D2D1::Matrix3x2F::Scale((FLOAT)trans.z, (FLOAT)trans.z) *
-				D2D1::Matrix3x2F::Translation((FLOAT)(-p2.x), (FLOAT)(-p2.y));
+			matrix = matrix *
+				D2D1::Matrix3x2F::Scale((FLOAT)zoom, (FLOAT)zoom, D2D1::Point2F((FLOAT)(point.x), (FLOAT)(point.y)));
 			InvalidateRect(hWnd, 0, 0);
-
-			//if (delta < 0) {
-			//	OnShrink(hWnd, x, y, trans);
-			//}
-			//else {
-			//	OnZoom(hWnd, x, y, trans);
-			//}
-		
-		//double oldzoom = zoom;
-
-			//POINT p = { 0 };
-			//GetCursorPos(&p);
-			//ScreenToClient(hWnd, &p);
-
-			//D2D1_POINT_2F p1;
-			//p1.x = (float)p.x;
-			//p1.y = (float)p.y;
-
-			//D2D1_POINT_2F p2;
-
-			//DisplayPoint2LogicPoint(&p1, &p2);
-
-			//zoom += GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f;
-
-			//LookAtPoint.x = LookAtPoint.x - zoom * p2.x + p2.x;
-			//LookAtPoint.y = LookAtPoint.y - zoom * p2.y + p2.y;
-
-			//InvalidateRect(hWnd, 0, 0);
 		}
 		break;
 	case WM_LBUTTONDOWN:
 		{
-			D2D1_POINT_2F p1;
-			p1.x = (float)GET_X_LPARAM(lParam);
-			p1.y = (float)GET_Y_LPARAM(lParam);
-			//LookAtPoint.x = p1.x;
-			//LookAtPoint.y = p1.y;
-			trans.l.x = p1.x;
-			trans.l.y = p1.y;
+			int x = GET_X_LPARAM(lParam);
+			int y = GET_Y_LPARAM(lParam);
+			auto point2F2 = matrix.TransformPoint(D2D1::Point2F((FLOAT)(0), (FLOAT)(0)));
+			matrix = matrix *
+				D2D1::Matrix3x2F::Translation((FLOAT)(x - point2F2.x), (FLOAT)(y - point2F2.y));
+		
 			InvalidateRect(hWnd, 0, 0);
-		}
-		break;
-	case WM_RBUTTONDOWN:
-		{
-			CPoint p1;
-			p1.x = (float)GET_X_LPARAM(lParam);
-			p1.y = (float)GET_Y_LPARAM(lParam);
-			CPoint p2;
-			trans.d2l(&p1, &p2);
-			trans.l.x = p2.x;
-			trans.l.y = p2.y;
-			InvalidateRect(hWnd, 0, 0);
-		}
-		break;
-	case WM_KEYDOWN:
-		{
-			if (wParam == VK_SPACE)
-			{
-				RECT rect;
-				GetClientRect(hWnd, &rect);
-				trans.l.x = 0;
-				trans.l.y = 0;
-				trans.c.w = rect.right;
-				trans.c.h = rect.bottom;
-				trans.z = 1.0;
-				InvalidateRect(hWnd, 0, 0);
-			}
-			else if (wParam == VK_UP) {
-				trans.z += 1.0;
-				InvalidateRect(hWnd, 0, 0);
-			}
-			else if (wParam == VK_DOWN) {
-				trans.z -= 1.0;
-				InvalidateRect(hWnd, 0, 0);
-			}
 		}
 		break;
 	case WM_PAINT:
@@ -346,7 +173,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance,
 	RegisterClass(&wndclass);
 	HWND hWnd = CreateWindow(
 		szClassName,
-		TEXT("Window"),
+		L"Window",
 		WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
 		CW_USEDEFAULT,
 		0,
