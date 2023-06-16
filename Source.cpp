@@ -34,6 +34,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	static ID2D1SolidColorBrush* m_pNormalBrush;
 	static ID2D1DeviceContext* m_pDeviceContext;
 	static D2D1::Matrix3x2F matrix;
+	static BOOL bDrag = FALSE;
+	static POINT ptDragStart;
 	switch (msg)
 	{
 	case WM_CREATE:
@@ -85,11 +87,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		{
 			int x = GET_X_LPARAM(lParam);
 			int y = GET_Y_LPARAM(lParam);
+			ptDragStart.x = x;
+			ptDragStart.y = y;
+			bDrag = TRUE;
+			SetCapture(hWnd);
+		}
+		break;
+	case WM_MOUSEMOVE:
+		if (bDrag) {
+			int x = GET_X_LPARAM(lParam);
+			int y = GET_Y_LPARAM(lParam);
 			auto point2F2 = matrix.TransformPoint(D2D1::Point2F((FLOAT)(0), (FLOAT)(0)));
 			matrix = matrix *
-				D2D1::Matrix3x2F::Translation((FLOAT)(x - point2F2.x), (FLOAT)(y - point2F2.y));
-		
+				D2D1::Matrix3x2F::Translation((FLOAT)(x - ptDragStart.x), (FLOAT)(y - ptDragStart.y));
 			InvalidateRect(hWnd, 0, 0);
+			ptDragStart.x = x;
+			ptDragStart.y = y;
+		}
+		break;
+	case WM_LBUTTONUP:
+		if (bDrag) {
+			ReleaseCapture();
+			bDrag = FALSE;
 		}
 		break;
 	case WM_PAINT:
